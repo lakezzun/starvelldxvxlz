@@ -1,0 +1,29 @@
+[Starvell]
+session_cookie =
+proxy =
+
+[Proxy]
+enabled = 0
+url =
+
+[Bot]
+chats_interval = 4
+orders_interval = 8
+handler_timeout = 0
+language = ru
+
+[Telegram]
+enabled = 0
+token =
+password =
+proxy =
+
+[Greetings]
+enabled = 0
+text = Здравствуйте! Заказ принят, скоро ответим.
+
+[AutoDelivery]
+enabled = 1
+
+[AutoResponse]
+enabled = 1

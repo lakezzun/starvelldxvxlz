@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.bak
+*.tmp
+.venv/
+venv/
+.env
+logs/
+storage/cache/
+storage/plugins/
+storage/products/
+configs/_main.cfg
+configs/auto_delivery.cfg
+configs/auto_response.cfg
+*.sqlite3
+.idea/
+.vscode/

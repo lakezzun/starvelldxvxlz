@@ -1,0 +1,4 @@
+httpx>=0.28.0
+colorama>=0.4.6
+pysocks>=1.7.1
+pyTelegramBotAPI>=4.15.2
