@@ -27,7 +27,6 @@ KEEP_PREFIXES = (
     "configs/auto_response.cfg",
     "storage/",
     "logs/",
-    "plugins/",
     ".git/",
     ".venv/",
     "venv/",
@@ -163,9 +162,14 @@ def run_update() -> str:
         if item.is_dir():
             continue
         rel = _rel_from_zip(item.filename)
-        if not rel or _skip(rel):
+        if not rel:
             continue
         dest = ROOT / rel
+        if rel.startswith("plugins/"):
+            if dest.exists():
+                continue
+        elif _skip(rel):
+            continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         with zf.open(item) as src, open(dest, "wb") as out:
             shutil.copyfileobj(src, out)

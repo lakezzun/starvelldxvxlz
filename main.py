@@ -38,8 +38,14 @@ def main() -> None:
     configure_logging()
     logger = logging.getLogger("main")
 
-    print(f"{Fore.CYAN}{LOGO}{Style.RESET_ALL}")
-    print(f"{Fore.RED}{Style.BRIGHT}v{VERSION}{Style.RESET_ALL}")
+    try:
+        print(f"{Fore.CYAN}{LOGO}{Style.RESET_ALL}")
+        print(f"{Fore.RED}{Style.BRIGHT}v{VERSION}{Style.RESET_ALL}")
+    except Exception:
+        try:
+            print(f"v{VERSION}")
+        except Exception:
+            pass
     logger.info("Разработчик %s", DEVELOPER)
     try:
         info = check_update()

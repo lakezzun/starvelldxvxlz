@@ -5,7 +5,7 @@ StarvellDxvxlz
 Разработчик: @dxvxlz (https://t.me/dxvxlz)
 GitHub: https://github.com/lakezzun/starvelldxvxlz
 Сайт: https://starvell.com
-Версия: 0.2.2
+Версия: 0.2.3
 
 Это не форк FunPay Cardinal и не бот @exfador. Свой HTTP-клиент к starvell.com (cookie session) и своя Telegram-панель на pyTelegramBotAPI. UX меню похож на Cardinal, API плагинов — как у Cardinal: хэндлер получает (app, event).
 
@@ -20,6 +20,7 @@ GitHub: https://github.com/lakezzun/starvelldxvxlz
 - Автовыдача товара после покупки (текст + файл со строками)
 - Приветствие нового чата
 - Плагины: один .py файл в папке plugins/
+- Плагин «Автозвёзды» (plugins/autostars.py): продажа Telegram Stars через Fragment, команды /fnp, /fnpjwt, /fnphelp
 - Прокси отдельно для Starvell и отдельно для Telegram
 - Смена cookie без правки файла руками
 - Статистика и выгрузка логов
@@ -51,7 +52,9 @@ Cookie: открой https://starvell.com, войди в аккаунт прод
 
 Запусти update.bat или в Telegram: /update либо /menu → Далее → Обновление.
 
-Бот качает свежий код с GitHub. Cookie, конфиги, товары и твои плагины не затираются. После загрузки перезапусти start.bat.
+Бот качает свежий код с GitHub. Cookie, конфиги, товары и уже лежащие плагины не затираются; новые плагины из репозитория докладываются. После загрузки перезапусти start.bat.
+
+На Windows-хостинге без нормальной консоли бот всё равно пишет лог в logs/starvell-dxvxlz.log.
 
 
 Команды Telegram
