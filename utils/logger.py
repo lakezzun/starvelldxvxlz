@@ -7,7 +7,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from colorama import Fore, Style, init
+from colorama import Fore, Style
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = ROOT / "logs"
@@ -49,7 +49,6 @@ def _safe_reconfigure() -> None:
 HAS_CONSOLE = _has_console()
 _safe_reconfigure()
 HAS_COLOR = bool(HAS_CONSOLE and _enable_windows_vt())
-init(autoreset=True, wrap=False, convert=False, strip=not HAS_COLOR)
 
 
 class SecretFilter(logging.Filter):
