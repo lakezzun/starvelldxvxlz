@@ -5,6 +5,7 @@ import threading
 import time
 from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import parse_qs
 
 import httpx
 
@@ -36,14 +37,21 @@ class _NextDataParser(HTMLParser):
             self.chunks.append(data)
 
 
-def extract_build_id(html: str) -> str:
+def parse_next_data(html: str) -> dict[str, Any]:
     parser = _NextDataParser()
     parser.feed(html or "")
     payload = "".join(parser.chunks).strip()
     if not payload:
         raise StarvellResponseError("на странице нет __NEXT_DATA__")
     data = json.loads(payload)
-    build_id = data.get("buildId") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        raise StarvellResponseError("некорректный __NEXT_DATA__")
+    return data
+
+
+def extract_build_id(html: str) -> str:
+    data = parse_next_data(html)
+    build_id = data.get("buildId")
     if not build_id:
         raise StarvellResponseError("buildId не найден")
     return str(build_id)
@@ -214,7 +222,7 @@ class HttpClient:
             params=params,
             retry_404_build=retry_404_build,
         )
-        if response.status_code in {401, 403}:
+        if response.status_code == 401:
             raise StarvellAuthError(f"HTTP {response.status_code}: {url}")
         if response.status_code == 429:
             wait = 15
@@ -259,8 +267,14 @@ class HttpClient:
             self._build_at = time.monotonic()
         return build_id
 
-    def next_data(self, path: str, *, referer: str = BASE_URL + "/") -> dict[str, Any]:
+    def next_data(self, path: str, *, referer: str = BASE_URL + "/", params: dict[str, Any] | None = None) -> dict[str, Any]:
         clean = path.lstrip("/")
+        query: dict[str, Any] | None = None
+        if "?" in clean:
+            clean, raw_query = clean.split("?", 1)
+            query = {key: values[-1] for key, values in parse_qs(raw_query, keep_blank_values=True).items()}
+        if params:
+            query = {**(query or {}), **params}
         last_error: Exception | None = None
         for attempt in range(2):
             build_id = self.build_id()
@@ -270,12 +284,15 @@ class HttpClient:
                     "GET",
                     url,
                     headers={"accept": "*/*", "referer": referer, "x-nextjs-data": "1"},
+                    params=query,
                     retry_404_build=True,
                 )
                 if isinstance(data, dict):
                     return data
                 raise StarvellResponseError(f"некорректный Next.js ответ: {path}")
             except StarvellRateLimitError:
+                raise
+            except StarvellAuthError:
                 raise
             except StarvellResponseError as exc:
                 last_error = exc
@@ -284,3 +301,27 @@ class HttpClient:
                     continue
                 raise
         raise last_error or StarvellResponseError(f"не удалось загрузить {path}")
+
+    def page_data(self, path: str, *, referer: str = BASE_URL + "/") -> dict[str, Any]:
+        url = f"{BASE_URL}/{path.lstrip('/')}"
+        response = self.request(
+            "GET",
+            url,
+            headers={
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "referer": referer,
+            },
+        )
+        if response.status_code == 401:
+            raise StarvellAuthError(f"HTTP {response.status_code}: {url}")
+        if response.status_code == 429:
+            wait = 15
+            header = (response.headers.get("Retry-After") or "").strip()
+            try:
+                wait = int(float(header))
+            except ValueError:
+                pass
+            raise StarvellRateLimitError(f"HTTP 429: {url}", wait=wait)
+        if response.status_code >= 400:
+            raise StarvellResponseError(f"HTTP {response.status_code}: {url}")
+        return parse_next_data(response.text)

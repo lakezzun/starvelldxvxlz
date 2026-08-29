@@ -184,7 +184,7 @@ class App:
             return wait
         if not lots:
             self.last_bump = {"ok": 0, "fail": 0, "lots": 0, "at": time.time(), "wait": self.bump_interval(), "error": "нет лотов"}
-            logger.info("Автоподнятие: на аккаунте нет лотов.")
+            logger.info("Автоподнятие: лоты не найдены. Если на сайте они есть — Starvell не отдал список профиля.")
             return self.bump_interval()
         groups: dict[int, set[int]] = {}
         referer = ""

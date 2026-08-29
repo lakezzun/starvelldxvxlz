@@ -112,17 +112,32 @@ class Account:
     def get_lots(self) -> list[Lot]:
         if not self.user:
             return []
-        attempts: list[tuple[str, str]] = []
-        if self.user.username:
-            name = quote(self.user.username, safe="")
-            attempts.append((f"profile/{name}.json", f"{BASE_URL}/profile/{self.user.username}"))
-        if self.user.id:
-            attempts.append((f"users/{self.user.id}.json?user_id={self.user.id}", f"{BASE_URL}/users/{self.user.id}"))
+        username = (self.user.username or self.user.id or "").strip()
+        if not username:
+            logger.warning("Автоподнятие: в профиле нет имени пользователя.")
+            return []
+        encoded = quote(username, safe="")
         last_error: Exception | None = None
-        for path, referer in attempts:
+        for label, loader in (
+            (
+                "next-data",
+                lambda: self.http.next_data(
+                    f"profile/{encoded}.json",
+                    referer=f"{BASE_URL}/profile/{encoded}",
+                    params={"username": username},
+                ),
+            ),
+            (
+                "html",
+                lambda: self.http.page_data(f"profile/{encoded}", referer=BASE_URL + "/"),
+            ),
+        ):
             try:
-                data = self.http.next_data(path, referer=referer)
+                data = loader()
                 lots = _lots_from_props(page_props(data, "profile"))
+                if not lots:
+                    logger.debug("Лоты %s: страница открылась, но список пустой.", label)
+                    continue
                 game_ids = sorted({lot.game_id for lot in lots if lot.game_id})
                 if game_ids:
                     self.http.update_cookies({"starvell.my_games": ",".join(str(gid) for gid in game_ids)})
@@ -131,7 +146,7 @@ class Account:
                 raise
             except Exception as exc:
                 last_error = exc
-                logger.debug("Лоты %s: %s", path, exc)
+                logger.debug("Лоты %s: %s", label, exc)
         if last_error:
             logger.warning("Не удалось получить лоты профиля: %s", last_error)
         return []
@@ -197,7 +212,7 @@ def _lots_from_props(props: dict[str, Any]) -> list[Lot]:
         game_slug = str(game.get("slug") or category.get("gameSlug") or "").strip()
         category_slug = str(category.get("slug") or "").strip()
         category_url = f"{BASE_URL}/{game_slug}/{category_slug}/trade" if game_slug and category_slug else ""
-        offers = category.get("offers") or []
+        offers = category.get("offers") or category.get("items") or category.get("lots") or []
         if not isinstance(offers, list):
             continue
         for offer in offers:
