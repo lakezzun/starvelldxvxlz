@@ -12,7 +12,7 @@ from core import App
 from first_setup import first_setup, setup_telegram
 from utils.brand import APP_NAME, DEVELOPER, VERSION
 from utils.config import MAIN_CFG_PATH, cfg_get, ensure_dirs, load_main_config
-from utils.logger import configure_logging, enable_windows_console, set_console_title
+from utils.logger import configure_logging, set_console_title
 from utils.restart import clear_restart_flag
 from utils.updater import check_update, run_update
 
@@ -37,7 +37,6 @@ def main() -> None:
 
     ensure_dirs()
     clear_restart_flag()
-    enable_windows_console()
     set_console_title(f"{APP_NAME} v{VERSION}")
     colorama.init()
     configure_logging()

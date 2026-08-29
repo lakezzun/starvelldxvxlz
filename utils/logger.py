@@ -1,32 +1,36 @@
 from __future__ import annotations
 
+import atexit
 import logging
 import logging.handlers
 import os
+import queue
 import re
 import sys
-from pathlib import Path
+
+from colorama import Back, Fore, Style
 
 from utils.config import ROOT
 
 LOG_DIR = ROOT / "logs"
 _SECRET_RE = re.compile(r"bot\d+:[A-Za-z0-9_-]+", re.I)
-ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-_STD_OUTPUT = 0xFFFFFFF5  # STD_OUTPUT_HANDLE
-_STD_ERROR = 0xFFFFFFF4  # STD_ERROR_HANDLE
-_kernel32 = None
 
+LOG_COLORS = {
+    logging.DEBUG: Fore.BLACK + Style.BRIGHT,
+    logging.INFO: Fore.GREEN,
+    logging.WARN: Fore.YELLOW,
+    logging.ERROR: Fore.RED,
+    logging.CRITICAL: Back.RED,
+}
 
-def _bad_handle(handle) -> bool:
-    if handle is None:
-        return True
-    value = handle if isinstance(handle, int) else getattr(handle, "value", handle)
-    return value in {None, 0, -1, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF}
-
-CLI_LOG_FORMAT = "[%(asctime)s] > %(levelname).1s: %(message)s"
+CLI_LOG_FORMAT = (
+    f"{Fore.BLACK + Style.BRIGHT}[%(asctime)s]{Style.RESET_ALL}"
+    f"{Fore.CYAN}>{Style.RESET_ALL} $RESET%(levelname).1s: %(message)s{Style.RESET_ALL}"
+)
 CLI_TIME_FORMAT = "%d-%m-%Y %H:%M:%S"
 FILE_LOG_FORMAT = "[%(asctime)s][%(filename)s][%(lineno)d]> %(levelname).1s: %(message)s"
 FILE_TIME_FORMAT = "%d.%m.%y %H:%M:%S"
+CLEAR_RE = re.compile(r"(\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]))|(\n)|(\r)")
 LOGGER_NAMES = ["main", "SVC", "TGBot"]
 
 
@@ -44,137 +48,58 @@ class SecretFilter(logging.Filter):
         return True
 
 
+def add_colors(text: str) -> str:
+    colors = {
+        "$YELLOW": Fore.YELLOW,
+        "$CYAN": Fore.CYAN,
+        "$MAGENTA": Fore.MAGENTA,
+        "$BLUE": Fore.BLUE,
+        "$GREEN": Fore.GREEN,
+        "$BLACK": Fore.BLACK,
+        "$WHITE": Fore.WHITE,
+        "$B_YELLOW": Back.YELLOW,
+        "$B_CYAN": Back.CYAN,
+        "$B_MAGENTA": Back.MAGENTA,
+        "$B_BLUE": Back.BLUE,
+        "$B_GREEN": Back.GREEN,
+        "$B_BLACK": Back.BLACK,
+        "$B_WHITE": Back.WHITE,
+    }
+    for key, value in colors.items():
+        if key in text:
+            text = text.replace(key, value)
+    return text
+
+
 class CLILoggerFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         msg = record.getMessage()
+        msg = add_colors(msg)
+        msg = msg.replace("$RESET", LOG_COLORS[record.levelno])
         record.msg = msg
         record.args = None
-        return logging.Formatter(CLI_LOG_FORMAT, CLI_TIME_FORMAT).format(record)
+        log_format = CLI_LOG_FORMAT.replace("$RESET", Style.RESET_ALL + LOG_COLORS[record.levelno])
+        return logging.Formatter(log_format, CLI_TIME_FORMAT).format(record)
 
 
 class FileLoggerFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        msg = ANSI_RE.sub("", record.getMessage())
+        msg = CLEAR_RE.sub("", record.getMessage())
         record.msg = msg
         record.args = None
         return logging.Formatter(FILE_LOG_FORMAT, FILE_TIME_FORMAT).format(record)
 
 
-def _win_api():
-    global _kernel32
-    if _kernel32 is not None:
-        return _kernel32
-    import ctypes
-    from ctypes import wintypes
-
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.GetStdHandle.argtypes = [wintypes.DWORD]
-    k32.GetStdHandle.restype = wintypes.HANDLE
-    k32.WriteConsoleW.argtypes = [
-        wintypes.HANDLE,
-        wintypes.LPCWSTR,
-        wintypes.DWORD,
-        ctypes.POINTER(wintypes.DWORD),
-        wintypes.LPVOID,
-    ]
-    k32.WriteConsoleW.restype = wintypes.BOOL
-    k32.SetConsoleOutputCP.argtypes = [wintypes.UINT]
-    k32.SetConsoleOutputCP.restype = wintypes.BOOL
-    k32.SetConsoleCP.argtypes = [wintypes.UINT]
-    k32.SetConsoleCP.restype = wintypes.BOOL
-    k32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-    k32.GetConsoleMode.restype = wintypes.BOOL
-    k32.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-    k32.SetConsoleMode.restype = wintypes.BOOL
-    k32.SetConsoleTitleW.argtypes = [wintypes.LPCWSTR]
-    k32.SetConsoleTitleW.restype = wintypes.BOOL
-    _kernel32 = k32
-    return k32
+class _QueueHandler(logging.handlers.QueueHandler):
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        return record
 
 
-def enable_windows_console() -> None:
-    if os.name != "nt":
-        return
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        k32 = _win_api()
-        k32.SetConsoleOutputCP(65001)
-        k32.SetConsoleCP(65001)
-        vt = 0x0004
-        for std_id in (_STD_OUTPUT, _STD_ERROR):
-            handle = k32.GetStdHandle(std_id)
-            if _bad_handle(handle):
-                continue
-            mode = wintypes.DWORD()
-            if k32.GetConsoleMode(handle, ctypes.byref(mode)):
-                k32.SetConsoleMode(handle, mode.value | vt)
-    except Exception:
-        pass
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
-
-
-def _write_console_w(text: str) -> bool:
-    if os.name != "nt":
-        return False
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        k32 = _win_api()
-        handle = k32.GetStdHandle(_STD_OUTPUT)
-        if _bad_handle(handle):
-            return False
-        payload = text.replace("\n", "\r\n")
-        written = wintypes.DWORD(0)
-        nchars = len(payload.encode("utf-16-le")) // 2
-        return bool(k32.WriteConsoleW(handle, payload, nchars, ctypes.byref(written), None))
-    except Exception:
-        return False
-
-
-def _write_line(text: str) -> None:
-    line = ANSI_RE.sub("", text).rstrip("\r\n") + "\n"
-    if _write_console_w(line):
-        return
-    raw = line.encode("utf-8", errors="replace")
-    try:
-        sys.stdout.buffer.write(raw)
-        sys.stdout.buffer.flush()
-        return
-    except Exception:
-        pass
-    try:
-        sys.stdout.write(line)
-        sys.stdout.flush()
-        return
-    except Exception:
-        pass
-    print(line, end="", flush=True)
-
-
-class ConsoleHandler(logging.Handler):
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            _write_line(self.format(record))
-        except Exception:
-            try:
-                print(self.format(record), flush=True)
-            except Exception:
-                pass
-
-
-def configure_logging() -> None:
-    enable_windows_console()
+def configure_logging() -> logging.handlers.QueueListener:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     secret = SecretFilter()
 
-    cli_handler = ConsoleHandler()
+    cli_handler = logging.StreamHandler()
     cli_handler.setLevel(logging.INFO)
     cli_handler.setFormatter(CLILoggerFormatter())
     cli_handler.addFilter(secret)
@@ -190,30 +115,39 @@ def configure_logging() -> None:
     file_handler.setFormatter(FileLoggerFormatter())
     file_handler.addFilter(secret)
 
+    log_queue = queue.SimpleQueue()
+    queue_handler = _QueueHandler(log_queue)
+
     for name in LOGGER_NAMES:
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.setLevel(logging.DEBUG)
-        logger.addHandler(cli_handler)
-        logger.addHandler(file_handler)
+        logger.addHandler(queue_handler)
         logger.propagate = False
 
     telebot_logger = logging.getLogger("TeleBot")
     telebot_logger.handlers.clear()
-    telebot_logger.setLevel(logging.CRITICAL)
+    telebot_logger.setLevel(logging.ERROR)
     telebot_logger.propagate = False
-    telebot_logger.addHandler(file_handler)
+    telebot_logger.addHandler(queue_handler)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.ERROR)
     logging.getLogger("requests").setLevel(logging.WARNING)
 
+    listener = logging.handlers.QueueListener(log_queue, cli_handler, file_handler, respect_handler_level=True)
+    listener.start()
+    atexit.register(listener.stop)
+    return listener
+
 
 def set_console_title(title: str) -> None:
     if os.name == "nt":
         try:
-            _win_api().SetConsoleTitleW(title)
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleTitleW(title)
         except Exception:
             pass
         return
