@@ -1,54 +1,62 @@
 from __future__ import annotations
 
+import atexit
 import logging
+import logging.handlers
 import os
+import queue
 import re
 import sys
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from colorama import Fore, Style
+from colorama import Back, Fore, Style
 
-ROOT = Path(__file__).resolve().parent.parent
+from utils.config import ROOT
+
 LOG_DIR = ROOT / "logs"
 _SECRET_RE = re.compile(r"bot\d+:[A-Za-z0-9_-]+", re.I)
 
+LOG_COLORS = {
+    logging.DEBUG: Fore.BLACK + Style.BRIGHT,
+    logging.INFO: Fore.GREEN,
+    logging.WARN: Fore.YELLOW,
+    logging.ERROR: Fore.RED,
+    logging.CRITICAL: Back.RED,
+}
 
-def _has_console() -> bool:
-    try:
-        stream = sys.stdout
-        return bool(stream) and stream.isatty()
-    except Exception:
-        return False
+CLI_LOG_FORMAT = (
+    f"{Fore.BLACK + Style.BRIGHT}[%(asctime)s]{Style.RESET_ALL}"
+    f"{Fore.CYAN}>{Style.RESET_ALL} $RESET%(levelname).1s: %(message)s{Style.RESET_ALL}"
+)
+CLI_TIME_FORMAT = "%d-%m-%Y %H:%M:%S"
+FILE_LOG_FORMAT = "[%(asctime)s][%(filename)s][%(lineno)d]> %(levelname).1s: %(message)s"
+FILE_TIME_FORMAT = "%d.%m.%y %H:%M:%S"
+CLEAR_RE = re.compile(r"(\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]))|(\n)|(\r)")
 
-
-def _enable_windows_vt() -> bool:
-    if os.name != "nt":
-        return True
-    try:
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.GetStdHandle(-11)
-        mode = ctypes.c_uint32()
-        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-            return False
-        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
-    except Exception:
-        return False
+LOGGER_NAMES = ["main", "SVC", "TGBot"]
 
 
-def _safe_reconfigure() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-        except Exception:
-            pass
-
-
-HAS_CONSOLE = _has_console()
-_safe_reconfigure()
-HAS_COLOR = bool(HAS_CONSOLE and _enable_windows_vt())
+def add_colors(text: str) -> str:
+    colors = {
+        "$YELLOW": Fore.YELLOW,
+        "$CYAN": Fore.CYAN,
+        "$MAGENTA": Fore.MAGENTA,
+        "$BLUE": Fore.BLUE,
+        "$GREEN": Fore.GREEN,
+        "$BLACK": Fore.BLACK,
+        "$WHITE": Fore.WHITE,
+        "$B_YELLOW": Back.YELLOW,
+        "$B_CYAN": Back.CYAN,
+        "$B_MAGENTA": Back.MAGENTA,
+        "$B_BLUE": Back.BLUE,
+        "$B_GREEN": Back.GREEN,
+        "$B_BLACK": Back.BLACK,
+        "$B_WHITE": Back.WHITE,
+    }
+    for key, value in colors.items():
+        if key in text:
+            text = text.replace(key, value)
+    return text
 
 
 class SecretFilter(logging.Filter):
@@ -65,87 +73,75 @@ class SecretFilter(logging.Filter):
         return True
 
 
-class ColorFormatter(logging.Formatter):
-    COLORS = {
-        logging.DEBUG: Fore.LIGHTBLACK_EX,
-        logging.INFO: Fore.CYAN,
-        logging.WARNING: Fore.YELLOW,
-        logging.ERROR: Fore.RED,
-        logging.CRITICAL: Fore.RED + Style.BRIGHT,
-    }
-
+class CLILoggerFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        message = super().format(record)
-        if not HAS_COLOR:
-            return message
-        color = self.COLORS.get(record.levelno, "")
-        return f"{color}{message}{Style.RESET_ALL}"
+        msg = record.getMessage()
+        msg = add_colors(msg)
+        msg = msg.replace("$RESET", LOG_COLORS[record.levelno])
+        record.msg = msg
+        record.args = None
+        log_format = CLI_LOG_FORMAT.replace("$RESET", Style.RESET_ALL + LOG_COLORS[record.levelno])
+        formatter = logging.Formatter(log_format, CLI_TIME_FORMAT)
+        return formatter.format(record)
 
 
-class SafeStreamHandler(logging.StreamHandler):
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            self._write(self.format(record) + self.terminator)
-        except Exception:
-            pass
-
-    def flush(self) -> None:
-        try:
-            super().flush()
-        except Exception:
-            pass
-
-    def _write(self, msg: str) -> None:
-        stream = self.stream or sys.stdout
-        try:
-            stream.write(msg)
-        except Exception:
-            raw = msg.encode("utf-8", errors="replace")
-            buf = getattr(stream, "buffer", None)
-            if buf is None:
-                buf = getattr(sys.__stdout__, "buffer", None)
-            if buf is not None:
-                buf.write(raw)
-            else:
-                sys.__stdout__.write(msg.encode("ascii", errors="replace").decode("ascii"))
-        try:
-            stream.flush()
-        except Exception:
-            try:
-                sys.__stdout__.flush()
-            except Exception:
-                pass
+class FileLoggerFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        msg = record.getMessage()
+        msg = CLEAR_RE.sub("", msg)
+        record.msg = msg
+        record.args = None
+        formatter = logging.Formatter(FILE_LOG_FORMAT, FILE_TIME_FORMAT)
+        return formatter.format(record)
 
 
-def configure_logging() -> None:
+class _QueueHandler(logging.handlers.QueueHandler):
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        return record
+
+
+def configure_logging() -> logging.handlers.QueueListener:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    datefmt = "%H:%M:%S"
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    root.handlers.clear()
     secret = SecretFilter()
 
-    console = SafeStreamHandler(sys.__stdout__ if hasattr(sys, "__stdout__") else sys.stdout)
-    console.setFormatter(ColorFormatter(fmt, datefmt))
-    console.addFilter(secret)
-    root.addHandler(console)
+    cli_handler = logging.StreamHandler()
+    cli_handler.setLevel(logging.INFO)
+    cli_handler.setFormatter(CLILoggerFormatter())
+    cli_handler.addFilter(secret)
+    cli_handler.addFilter(lambda record: record.name != "TeleBot")
 
-    file_handler = RotatingFileHandler(
-        LOG_DIR / "starvell-dxvxlz.log",
-        maxBytes=2_000_000,
-        backupCount=5,
+    file_handler = logging.handlers.RotatingFileHandler(
+        filename=str(LOG_DIR / "starvell-dxvxlz.log"),
+        maxBytes=20 * 1024 * 1024,
+        backupCount=25,
         encoding="utf-8",
     )
-    file_handler.setFormatter(logging.Formatter(fmt, datefmt))
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(FileLoggerFormatter())
     file_handler.addFilter(secret)
-    root.addHandler(file_handler)
+
+    log_queue: queue.SimpleQueue = queue.SimpleQueue()
+    queue_handler = _QueueHandler(log_queue)
+
+    for name in LOGGER_NAMES:
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.DEBUG)
+        logger.addHandler(queue_handler)
+
+    telebot_logger = logging.getLogger("TeleBot")
+    telebot_logger.setLevel(logging.ERROR)
+    telebot_logger.propagate = False
+    telebot_logger.addHandler(queue_handler)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("TeleBot").setLevel(logging.ERROR)
     logging.getLogger("urllib3").setLevel(logging.ERROR)
     logging.getLogger("requests").setLevel(logging.WARNING)
+
+    listener = logging.handlers.QueueListener(log_queue, cli_handler, file_handler, respect_handler_level=True)
+    listener.start()
+    atexit.register(listener.stop)
+    return listener
 
 
 def set_console_title(title: str) -> None:
@@ -156,9 +152,9 @@ def set_console_title(title: str) -> None:
             ctypes.windll.kernel32.SetConsoleTitleW(title)
         except Exception:
             pass
-    elif HAS_CONSOLE:
-        try:
-            sys.stdout.write(f"\33]0;{title}\a")
-            sys.stdout.flush()
-        except Exception:
-            pass
+        return
+    try:
+        sys.stdout.write(f"\33]0;{title}\a")
+        sys.stdout.flush()
+    except Exception:
+        pass

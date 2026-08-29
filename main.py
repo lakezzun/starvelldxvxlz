@@ -5,6 +5,7 @@ import os
 import sys
 import time
 
+import colorama
 from colorama import Fore, Style
 
 from core import App
@@ -37,6 +38,7 @@ def main() -> None:
     ensure_dirs()
     clear_restart_flag()
     set_console_title(f"{APP_NAME} v{VERSION}")
+    colorama.init()
     configure_logging()
     logger = logging.getLogger("main")
 
