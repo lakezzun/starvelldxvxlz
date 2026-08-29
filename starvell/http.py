@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from starvell.exceptions import StarvellAuthError, StarvellResponseError
+from starvell.exceptions import StarvellAuthError, StarvellRateLimitError, StarvellResponseError
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -216,6 +216,14 @@ class HttpClient:
         )
         if response.status_code in {401, 403}:
             raise StarvellAuthError(f"HTTP {response.status_code}: {url}")
+        if response.status_code == 429:
+            wait = 15
+            header = (response.headers.get("Retry-After") or "").strip()
+            try:
+                wait = int(float(header))
+            except ValueError:
+                pass
+            raise StarvellRateLimitError(f"HTTP 429: {url}", wait=wait)
         if response.status_code >= 400:
             raise StarvellResponseError(f"HTTP {response.status_code}: {url}")
         ctype = response.headers.get("content-type", "")
@@ -235,6 +243,14 @@ class HttpClient:
         )
         if response.status_code in {401, 403}:
             raise StarvellAuthError("сессия Starvell не принята")
+        if response.status_code == 429:
+            wait = 15
+            header = (response.headers.get("Retry-After") or "").strip()
+            try:
+                wait = int(float(header))
+            except ValueError:
+                pass
+            raise StarvellRateLimitError("HTTP 429: starvell.com", wait=wait)
         if response.status_code >= 400:
             raise StarvellResponseError(f"не удалось открыть starvell.com (HTTP {response.status_code})")
         build_id = extract_build_id(response.text)
@@ -259,6 +275,8 @@ class HttpClient:
                 if isinstance(data, dict):
                     return data
                 raise StarvellResponseError(f"некорректный Next.js ответ: {path}")
+            except StarvellRateLimitError:
+                raise
             except StarvellResponseError as exc:
                 last_error = exc
                 if attempt == 0 and "HTTP 404" in str(exc):

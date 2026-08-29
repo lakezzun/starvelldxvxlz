@@ -6,7 +6,7 @@ import time
 from typing import Any
 from urllib.parse import quote
 
-from starvell.exceptions import StarvellAuthError, StarvellResponseError
+from starvell.exceptions import StarvellAuthError, StarvellRateLimitError, StarvellResponseError
 from starvell.http import BASE_URL, HttpClient, build_cookies, collection, ensure_success, items_list, page_props
 from starvell.types import Chat, Lot, Message, Order, User
 
@@ -127,6 +127,8 @@ class Account:
                 if game_ids:
                     self.http.update_cookies({"starvell.my_games": ",".join(str(gid) for gid in game_ids)})
                 return lots
+            except StarvellRateLimitError:
+                raise
             except Exception as exc:
                 last_error = exc
                 logger.debug("Лоты %s: %s", path, exc)

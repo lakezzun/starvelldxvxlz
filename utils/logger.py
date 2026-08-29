@@ -12,7 +12,6 @@ from utils.config import ROOT
 LOG_DIR = ROOT / "logs"
 _SECRET_RE = re.compile(r"bot\d+:[A-Za-z0-9_-]+", re.I)
 ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-CLEAR_RE = re.compile(r"(\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]))|(\n)|(\r)")
 
 CLI_LOG_FORMAT = "[%(asctime)s] > %(levelname).1s: %(message)s"
 CLI_TIME_FORMAT = "%d-%m-%Y %H:%M:%S"
@@ -45,7 +44,7 @@ class CLILoggerFormatter(logging.Formatter):
 
 class FileLoggerFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        msg = CLEAR_RE.sub("", record.getMessage())
+        msg = ANSI_RE.sub("", record.getMessage())
         record.msg = msg
         record.args = None
         return logging.Formatter(FILE_LOG_FORMAT, FILE_TIME_FORMAT).format(record)
@@ -124,7 +123,7 @@ def configure_logging() -> None:
 
     telebot_logger = logging.getLogger("TeleBot")
     telebot_logger.handlers.clear()
-    telebot_logger.setLevel(logging.ERROR)
+    telebot_logger.setLevel(logging.CRITICAL)
     telebot_logger.propagate = False
     telebot_logger.addHandler(file_handler)
 

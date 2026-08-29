@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 APP_NAME = "StarvellDxvxlz"
-VERSION = "0.2.9"
+VERSION = "0.2.10"
 DEVELOPER = "@dxvxlz"
 DEVELOPER_URL = "https://t.me/dxvxlz"
 GITHUB_REPO = "lakezzun/starvelldxvxlz"

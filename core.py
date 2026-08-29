@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from starvell.account import Account
 from starvell.events import NewMessageEvent, NewOrderEvent, SessionLostEvent
-from starvell.exceptions import StarvellAuthError
+from starvell.exceptions import StarvellAuthError, StarvellRateLimitError
 from starvell.runner import Runner
 from utils.config import ROOT, cfg_get, proxy_url
 from utils.storage import bump_stat, load_disabled_plugins, load_stats, save_disabled_plugins
@@ -175,7 +175,13 @@ class App:
     def _raise_lots(self) -> int:
         if not self.account:
             return self.bump_interval()
-        lots = self.account.get_lots()
+        try:
+            lots = self.account.get_lots()
+        except StarvellRateLimitError as exc:
+            wait = max(60, exc.wait)
+            logger.warning("Автоподнятие: слишком частые запросы, пауза %s сек.", wait)
+            self.last_bump = {"ok": 0, "fail": 1, "lots": 0, "at": time.time(), "wait": wait, "error": "Starvell просит подождать"}
+            return wait
         if not lots:
             self.last_bump = {"ok": 0, "fail": 0, "lots": 0, "at": time.time(), "wait": self.bump_interval(), "error": "нет лотов"}
             logger.info("Автоподнятие: на аккаунте нет лотов.")
@@ -214,6 +220,12 @@ class App:
                 logger.error("Автоподнятие: сессия Starvell не принята.")
                 self.last_bump = {"ok": ok, "fail": fail + 1, "lots": len(lots), "at": time.time(), "wait": 60, "error": last_error}
                 return 60
+            except StarvellRateLimitError as exc:
+                wait = max(60, exc.wait)
+                last_error = "Starvell просит подождать"
+                logger.warning("Автоподнятие: слишком частые запросы, пауза %s сек.", wait)
+                self.last_bump = {"ok": ok, "fail": fail + 1, "lots": len(lots), "at": time.time(), "wait": wait, "error": last_error}
+                return wait
             except Exception as exc:
                 fail += 1
                 last_error = str(exc)

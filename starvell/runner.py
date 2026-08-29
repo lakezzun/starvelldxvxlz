@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable
 
 from starvell.account import Account
 from starvell.events import NewMessageEvent, NewOrderEvent, SessionLostEvent
-from starvell.exceptions import StarvellAuthError
+from starvell.exceptions import StarvellAuthError, StarvellRateLimitError
 from starvell.types import Chat, Message
 
 logger = logging.getLogger("SVC.runner")
@@ -46,6 +46,12 @@ class Runner:
                 if on_session_lost:
                     on_session_lost(SessionLostEvent(reason=str(exc)))
                 time.sleep(15)
+            except StarvellRateLimitError as exc:
+                wait = max(15, exc.wait)
+                logger.warning("Starvell: слишком частые запросы, пауза %s сек.", wait)
+                time.sleep(wait)
+                next_chats = time.monotonic() + wait
+                next_orders = time.monotonic() + wait
             except Exception:
                 logger.exception("Ошибка цикла мониторинга")
                 time.sleep(5)

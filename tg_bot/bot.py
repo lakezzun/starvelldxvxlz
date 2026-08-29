@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import telebot
 from requests.exceptions import ConnectionError as RequestsConnectionError
-from requests.exceptions import SSLError, Timeout
+from requests.exceptions import ChunkedEncodingError, ProxyError, ReadTimeout, SSLError, Timeout
 from telebot.apihelper import ApiTelegramException
 from telebot.types import BotCommand, CallbackQuery, Message
 from telebot.types import InlineKeyboardMarkup as K
@@ -22,7 +22,43 @@ if TYPE_CHECKING:
 logger = logging.getLogger("SVC.telegram")
 telebot.apihelper.ENABLE_MIDDLEWARE = False
 
-_NETWORK = (SSLError, RequestsConnectionError, Timeout, ConnectionError, TimeoutError)
+_NETWORK = (
+    SSLError,
+    RequestsConnectionError,
+    ProxyError,
+    Timeout,
+    ReadTimeout,
+    ChunkedEncodingError,
+    ConnectionError,
+    TimeoutError,
+)
+
+
+class _TelegramGuard:
+    def __init__(self) -> None:
+        self._conflict = False
+
+    def handle(self, exception: Exception) -> bool:
+        if isinstance(exception, ApiTelegramException):
+            code = getattr(exception, "error_code", None)
+            if code == 409:
+                if not self._conflict:
+                    logger.warning(
+                        "Telegram: уже крутится другой экземпляр этого бота. Оставь один процесс — либо хостинг, либо свой ПК."
+                    )
+                    self._conflict = True
+                time.sleep(20)
+                return True
+            if code == 429:
+                logger.warning("Telegram просит подождать (слишком частые запросы).")
+                time.sleep(10)
+                return True
+            return False
+        if isinstance(exception, _NETWORK):
+            logger.warning("Связь с Telegram пропала: %s", exception)
+            time.sleep(5)
+            return True
+        return False
 
 
 def _configure_telegram_http(cfg) -> None:
@@ -58,6 +94,7 @@ class TGBot:
         token = cfg_get(cardinal.cfg, "Telegram", "token")
         _configure_telegram_http(cardinal.cfg)
         self.bot = telebot.TeleBot(token, parse_mode="HTML", allow_sending_without_reply=True, num_threads=5)
+        self.bot.exception_handler = _TelegramGuard()
         self.attempts: dict[int, int] = {}
         self.user_states: dict[int, dict[int, dict[str, Any]]] = {}
         self.file_handlers: dict[str, Callable] = {}
@@ -233,8 +270,16 @@ class TGBot:
                 _configure_telegram_http(self.cardinal.cfg)
                 me = _retry(self.bot.get_me)
                 logger.info("Telegram-бот @%s запущен.", me.username)
-                self.bot.infinity_polling(logger_level=logging.ERROR, skip_pending=True, timeout=40, long_polling_timeout=40)
+                self.bot.infinity_polling(logger_level=None, skip_pending=True, timeout=40, long_polling_timeout=40)
                 fails = 0
+            except ApiTelegramException as exc:
+                fails += 1
+                if getattr(exc, "error_code", None) == 409:
+                    logger.warning("Telegram: конфликт getUpdates, жду 20 сек. (%s)", fails)
+                    time.sleep(20)
+                else:
+                    logger.warning("Telegram API: %s", exc)
+                    time.sleep(min(30, 5 * fails))
             except _NETWORK:
                 fails += 1
                 logger.warning("Связь с Telegram пропала (%s). Пробую снова...", fails)
