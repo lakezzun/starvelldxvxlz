@@ -5,7 +5,7 @@ StarvellDxvxlz
 Разработчик: @dxvxlz (https://t.me/dxvxlz)
 GitHub: https://github.com/lakezzun/starvelldxvxlz
 Сайт: https://starvell.com
-Версия: 0.2.14
+Версия: 0.2.15
 
 Это не форк FunPay Cardinal и не бот @exfador. Свой HTTP-клиент к starvell.com (cookie session) и своя Telegram-панель на pyTelegramBotAPI. UX меню похож на Cardinal, API плагинов — как у Cardinal: хэндлер получает (app, event).
 
@@ -20,7 +20,7 @@ GitHub: https://github.com/lakezzun/starvelldxvxlz
 - Автовыдача товара после покупки (текст + файл со строками)
 - Автоподнятие лотов (бамп объявлений Starvell по таймеру или кнопкой)
 - Приветствие нового чата
-- Плагины: один .py файл в папке plugins/
+- Плагины: один .py файл в папке plugins/. В комплекте Auto Robux (выдача Robux через rbcode.net)
 - Прокси отдельно для Starvell и отдельно для Telegram
 - Смена cookie без правки файла руками
 - Статистика и выгрузка логов
