@@ -22,17 +22,34 @@ def _has_console() -> bool:
         return False
 
 
+def _enable_windows_vt() -> bool:
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
+    except Exception:
+        return False
+
+
 def _safe_reconfigure() -> None:
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding="utf-8", errors="replace")
+            stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
         except Exception:
             pass
 
 
 HAS_CONSOLE = _has_console()
 _safe_reconfigure()
-init(autoreset=True, strip=not HAS_CONSOLE, convert=HAS_CONSOLE)
+HAS_COLOR = bool(HAS_CONSOLE and _enable_windows_vt())
+init(autoreset=True, wrap=False, convert=False, strip=not HAS_COLOR)
 
 
 class SecretFilter(logging.Filter):
@@ -60,7 +77,7 @@ class ColorFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         message = super().format(record)
-        if not HAS_CONSOLE:
+        if not HAS_COLOR:
             return message
         color = self.COLORS.get(record.levelno, "")
         return f"{color}{message}{Style.RESET_ALL}"
@@ -69,12 +86,7 @@ class ColorFormatter(logging.Formatter):
 class SafeStreamHandler(logging.StreamHandler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            msg = self.format(record)
-            stream = self.stream
-            if stream is None:
-                return
-            stream.write(msg + self.terminator)
-            self.flush()
+            self._write(self.format(record) + self.terminator)
         except Exception:
             pass
 
@@ -83,6 +95,27 @@ class SafeStreamHandler(logging.StreamHandler):
             super().flush()
         except Exception:
             pass
+
+    def _write(self, msg: str) -> None:
+        stream = self.stream or sys.stdout
+        try:
+            stream.write(msg)
+        except Exception:
+            raw = msg.encode("utf-8", errors="replace")
+            buf = getattr(stream, "buffer", None)
+            if buf is None:
+                buf = getattr(sys.__stdout__, "buffer", None)
+            if buf is not None:
+                buf.write(raw)
+            else:
+                sys.__stdout__.write(msg.encode("ascii", errors="replace").decode("ascii"))
+        try:
+            stream.flush()
+        except Exception:
+            try:
+                sys.__stdout__.flush()
+            except Exception:
+                pass
 
 
 def configure_logging() -> None:
@@ -94,7 +127,7 @@ def configure_logging() -> None:
     root.handlers.clear()
     secret = SecretFilter()
 
-    console = SafeStreamHandler(sys.stdout)
+    console = SafeStreamHandler(sys.__stdout__ if hasattr(sys, "__stdout__") else sys.stdout)
     console.setFormatter(ColorFormatter(fmt, datefmt))
     console.addFilter(secret)
     root.addHandler(console)
