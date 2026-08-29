@@ -11,6 +11,7 @@ class NotificationTypes:
     new_order = "new_order"
     bot_start = "bot_start"
     critical = "critical"
+    lots_raise = "lots_raise"
     other = "other"
 
 

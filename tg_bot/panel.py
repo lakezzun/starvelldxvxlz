@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 from telebot.types import CallbackQuery, Message
 
 from tg_bot import cbt, keyboards as kb
 from tg_bot.utils import h, mask_cookie, mask_proxy
-from utils.brand import APP_NAME, CREDITS_HTML, DESC_AD, DESC_AR, DESC_AU, DESC_GR, DESC_GS, DESC_LANG, DESC_MAIN, DESC_NS, DESC_PROXY, DESC_UPD
+from utils.brand import APP_NAME, CREDITS_HTML, DESC_AD, DESC_AR, DESC_AU, DESC_BUMP, DESC_GR, DESC_GS, DESC_LANG, DESC_MAIN, DESC_NS, DESC_PROXY, DESC_UPD
 from utils.config import ROOT, cfg_get, save_main_config
 from utils.storage import load_stats, save_authorized_users
 from utils.updater import check_update, run_update
@@ -403,6 +404,7 @@ def init_panel(cardinal: App) -> None:
         mapping = {
             "ar": ("AutoResponse", "1"),
             "ad": ("AutoDelivery", "1"),
+            "ab": ("AutoRaise", "1"),
             "gr": ("Greetings", "0"),
         }
         section, default = mapping[kind]
@@ -412,6 +414,102 @@ def init_panel(cardinal: App) -> None:
         cardinal.cfg.set(section, "enabled", "0" if enabled else "1")
         save_main_config(cardinal.cfg)
         open_globals(call)
+
+    def _fmt_sec(sec: int) -> str:
+        sec = max(0, int(sec))
+        if sec >= 3600:
+            return f"{sec // 3600} ч {(sec % 3600) // 60} мин"
+        if sec >= 60:
+            return f"{max(1, sec // 60)} мин"
+        return f"{sec} сек"
+
+    def _autoraise_text() -> str:
+        enabled = cardinal.autoraise_enabled()
+        interval = cardinal.bump_interval()
+        last = cardinal.last_bump or {}
+        at = float(last.get("at") or 0)
+        when = "ещё не было" if not at else time.strftime("%H:%M:%S", time.localtime(at))
+        err = h(last.get("error") or "")
+        extra = f"\nОшибка: <code>{err}</code>" if err else ""
+        return (
+            f"<b>Автоподнятие лотов</b>\n\n"
+            f"{DESC_BUMP}\n\n"
+            f"Состояние: <b>{'вкл' if enabled else 'выкл'}</b>\n"
+            f"Интервал: <code>{_fmt_sec(interval)}</code>\n\n"
+            f"Последний бамп: <code>{when}</code>\n"
+            f"Игр поднято: <b>{int(last.get('ok') or 0)}</b> / не вышло: <b>{int(last.get('fail') or 0)}</b>\n"
+            f"Лотов на аккаунте: <b>{int(last.get('lots') or 0)}</b>"
+            f"{extra}"
+        )
+
+    def _autoraise_kb():
+        enabled = cardinal.autoraise_enabled()
+        return kb._rows(
+            [
+                [(("🔴 Выключить" if enabled else "🟢 Включить"), f"{cbt.AUTO_RAISE}:tg")],
+                [("📈 Поднять сейчас", cbt.BUMP_NOW)],
+                [("⏱ Интервал", cbt.SET_BUMP_INTERVAL)],
+                [("◀️ Назад", cbt.MAIN2)],
+            ]
+        )
+
+    def open_autoraise(call: CallbackQuery) -> None:
+        _edit(call, _autoraise_text(), _autoraise_kb())
+
+    def autoraise_action(call: CallbackQuery) -> None:
+        action = call.data.split(":")[1] if ":" in call.data else ""
+        if "AutoRaise" not in cardinal.cfg:
+            cardinal.cfg.add_section("AutoRaise")
+        if action == "tg":
+            cardinal.cfg.set("AutoRaise", "enabled", "0" if cardinal.autoraise_enabled() else "1")
+            save_main_config(cardinal.cfg)
+        open_autoraise(call)
+
+    def bump_now(call: CallbackQuery) -> None:
+        bot.answer_callback_query(call.id, "Поднимаю лоты...")
+        try:
+            wait = cardinal.raise_lots()
+            extra = f" Следующая попытка через {_fmt_sec(wait)}."
+        except Exception as exc:
+            bot.send_message(call.message.chat.id, f"❌ Бамп не вышел: {h(exc)}")
+            open_autoraise(call)
+            return
+        last = cardinal.last_bump or {}
+        if int(last.get("ok") or 0):
+            bot.send_message(call.message.chat.id, f"✅ Лоты подняты.{extra}")
+        else:
+            err = h(last.get("error") or "Starvell не принял бамп")
+            bot.send_message(call.message.chat.id, f"⚠️ Не поднялось: {err}.{extra}")
+        open_autoraise(call)
+
+    def ask_bump_interval(call: CallbackQuery) -> None:
+        msg = bot.send_message(
+            call.message.chat.id,
+            "Интервал автоподнятия в минутах. Например <code>30</code>. Минимум 5.",
+            reply_markup=kb.cancel(),
+        )
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, cbt.SET_BUMP_INTERVAL)
+        bot.answer_callback_query(call.id)
+
+    def save_bump_interval(message: Message) -> None:
+        tg.clear_state(message.chat.id, message.from_user.id, True)
+        raw = (message.text or "").strip().replace(",", ".")
+        try:
+            minutes = float(raw)
+            if minutes < 5:
+                raise ValueError("too small")
+        except Exception:
+            bot.send_message(message.chat.id, "Нужно число минут, минимум 5. Например <code>30</code>.")
+            return
+        if "AutoRaise" not in cardinal.cfg:
+            cardinal.cfg.add_section("AutoRaise")
+        cardinal.cfg.set("AutoRaise", "interval", str(int(minutes * 60)))
+        save_main_config(cardinal.cfg)
+        bot.send_message(message.chat.id, f"✅ Интервал автоподнятия: {int(minutes)} мин.")
+
+    def cmd_restart(message: Message) -> None:
+        bot.send_message(message.chat.id, "♻️ Перезапускаюсь...")
+        cardinal.request_restart()
 
     def ignore_empty(call: CallbackQuery) -> None:
         bot.answer_callback_query(call.id)
@@ -457,7 +555,7 @@ def init_panel(cardinal: App) -> None:
                 result = run_update()
             except Exception as exc:
                 result = f"Ошибка обновления: {exc}"
-            bot.send_message(call.message.chat.id, h(result))
+            bot.send_message(call.message.chat.id, h(result) + "\n\nПерезапусти бота командой /restart.")
             open_update(call)
             return
         bot.answer_callback_query(call.id)
@@ -468,12 +566,18 @@ def init_panel(cardinal: App) -> None:
     tg.msg_handler(cmd_logs, commands=["logs"])
     tg.msg_handler(about, commands=["about"])
     tg.msg_handler(cmd_update, commands=["update"])
+    tg.msg_handler(cmd_restart, commands=["restart"])
     tg.cbq_handler(update_action, lambda c: c.data == cbt.UPDATE or c.data.startswith(f"{cbt.UPDATE}:"))
     tg.cbq_handler(open_main, lambda c: c.data == cbt.MAIN)
     tg.cbq_handler(open_main2, lambda c: c.data == cbt.MAIN2)
     tg.cbq_handler(open_language, lambda c: c.data == cbt.LANGUAGE)
     tg.cbq_handler(open_globals, lambda c: c.data == cbt.GLOBALS)
     tg.cbq_handler(toggle_global, lambda c: c.data.startswith(f"{cbt.TOGGLE_GS}:"))
+    tg.cbq_handler(open_autoraise, lambda c: c.data == cbt.AUTO_RAISE)
+    tg.cbq_handler(autoraise_action, lambda c: c.data.startswith(f"{cbt.AUTO_RAISE}:"))
+    tg.cbq_handler(bump_now, lambda c: c.data == cbt.BUMP_NOW)
+    tg.cbq_handler(ask_bump_interval, lambda c: c.data == cbt.SET_BUMP_INTERVAL)
+    tg.msg_handler(save_bump_interval, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, cbt.SET_BUMP_INTERVAL))
     tg.cbq_handler(ignore_empty, lambda c: c.data == cbt.EMPTY)
     tg.cbq_handler(open_profile, lambda c: c.data == cbt.PROFILE)
     tg.cbq_handler(open_notif, lambda c: c.data == cbt.NOTIF)

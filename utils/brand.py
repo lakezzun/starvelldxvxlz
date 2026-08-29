@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 APP_NAME = "StarvellDxvxlz"
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 DEVELOPER = "@dxvxlz"
 DEVELOPER_URL = "https://t.me/dxvxlz"
 GITHUB_REPO = "lakezzun/starvelldxvxlz"
@@ -44,10 +44,14 @@ DESC_PROXY = (
     "Если кнопки в боте иногда отваливаются по SSL — задай прокси именно для Telegram."
 )
 DESC_LANG = "Сейчас интерфейс на русском."
+DESC_BUMP = (
+    "Автоподнятие поднимает объявления Starvell вверх списка.\n"
+    "Сайт обычно даёт бамп раз в ~30 минут на игру."
+)
 DESC_UPD = (
     "Обновление качается с GitHub: <code>lakezzun/starvelldxvxlz</code>.\n\n"
-    "Cookie, конфиги, товары и твои плагины не затираются.\n"
-    "После загрузки перезапусти <code>start.bat</code>."
+    "Cookie, конфиги, товары и уже лежащие плагины не затираются.\n"
+    "После загрузки перезапусти бота командой /restart."
 )
 ACCESS_DENIED = (
     "👋 Привет, <b><i>{}</i></b>!\n\n"

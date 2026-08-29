@@ -103,6 +103,18 @@ class Chat:
 
 
 @dataclass
+class Lot:
+    id: str = ""
+    title: str = ""
+    game_id: int = 0
+    category_id: int = 0
+    price: Any = None
+    url: str = ""
+    category_url: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class Order:
     id: str = ""
     status: str = ""

@@ -145,7 +145,7 @@ def init_plugins_cp(cardinal: App) -> None:
         except Exception as exc:
             bot.send_message(
                 message.chat.id,
-                f"Файл сохранён в <code>plugins/{h(name)}</code>, но загрузка с ходу не вышла: {h(exc)}\nПерезапустите бота.",
+                f"Файл сохранён в <code>plugins/{h(name)}</code>, но загрузка с ходу не вышла: {h(exc)}\nПерезапусти бота командой /restart.",
             )
 
     tg.cbq_handler(open_list, lambda c: c.data.startswith(f"{cbt.PLUGINS}:"))

@@ -40,6 +40,10 @@ DEFAULTS = {
     "AutoResponse": {
         "enabled": "1",
     },
+    "AutoRaise": {
+        "enabled": "1",
+        "interval": "1800",
+    },
 }
 
 

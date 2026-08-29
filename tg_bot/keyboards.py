@@ -45,6 +45,7 @@ def main2() -> K:
             [("📁 Конфиги", cbt.CONFIGS)],
             [("👥 Авторизованные пользователи", f"{cbt.USERS}:0")],
             [("🌐 Прокси", cbt.PROXY)],
+            [("📈 Автоподнятие лотов", cbt.AUTO_RAISE)],
             [("🔄 Обновление", cbt.UPDATE)],
             [("📊 Статистика", cbt.STATS)],
             [("◀️ Назад", cbt.MAIN)],
@@ -72,6 +73,7 @@ def global_switches(cardinal: App) -> K:
         [
             [(f"{flag('AutoResponse', 'enabled', '1')} Автоответчик", f"{cbt.TOGGLE_GS}:ar")],
             [(f"{flag('AutoDelivery', 'enabled', '1')} Авто-выдача", f"{cbt.TOGGLE_GS}:ad")],
+            [(f"{flag('AutoRaise', 'enabled', '1')} Автоподнятие", f"{cbt.TOGGLE_GS}:ab")],
             [(f"{flag('Greetings', 'enabled', '0')} Приветствие", f"{cbt.TOGGLE_GS}:gr")],
             [("◀️ Назад", cbt.MAIN)],
         ]
@@ -88,6 +90,7 @@ def notifications(tg, chat_id: int) -> K:
             [(mark(NotificationTypes.new_message, "Новое сообщение"), f"{cbt.SWITCH_N}:{NotificationTypes.new_message}")],
             [(mark(NotificationTypes.new_order, "Новый заказ"), f"{cbt.SWITCH_N}:{NotificationTypes.new_order}")],
             [(mark(NotificationTypes.bot_start, "Запуск бота"), f"{cbt.SWITCH_N}:{NotificationTypes.bot_start}")],
+            [(mark(NotificationTypes.lots_raise, "Автоподнятие лотов"), f"{cbt.SWITCH_N}:{NotificationTypes.lots_raise}")],
             [("◀️ Назад", cbt.MAIN)],
         ]
     )

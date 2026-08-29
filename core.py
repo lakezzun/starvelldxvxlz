@@ -6,6 +6,7 @@ import inspect
 import logging
 import sys
 import threading
+import time
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
@@ -16,6 +17,7 @@ from typing import Any, Callable
 
 from starvell.account import Account
 from starvell.events import NewMessageEvent, NewOrderEvent, SessionLostEvent
+from starvell.exceptions import StarvellAuthError
 from starvell.runner import Runner
 from utils.config import ROOT, cfg_get, proxy_url
 from utils.storage import bump_stat, load_disabled_plugins, load_stats, save_disabled_plugins
@@ -71,6 +73,10 @@ class App:
         timeout = float(cfg_get(cfg, "Bot", "handler_timeout", "0") or 0)
         self.handler_timeout = timeout if timeout > 0 else None
         self._pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="SVC-PLUG")
+        self._stopping = False
+        self._restart = False
+        self._bump_lock = threading.Lock()
+        self.last_bump: dict[str, Any] = {"ok": 0, "fail": 0, "lots": 0, "at": 0, "wait": 0, "error": ""}
 
     def init(self) -> App:
         cookie = cfg_get(self.cfg, "Starvell", "session_cookie")
@@ -102,6 +108,7 @@ class App:
         chats_i = float(cfg_get(self.cfg, "Bot", "chats_interval", "4") or 4)
         orders_i = float(cfg_get(self.cfg, "Bot", "orders_interval", "8") or 8)
         self.runner = Runner(self.account, chats_interval=chats_i, orders_interval=orders_i)
+        threading.Thread(target=self._bump_loop, daemon=True, name="SVC-BUMP").start()
         self.run_handlers("post_init", (self,), wait=True)
         if self.telegram:
             threading.Thread(target=self.telegram.run, daemon=True, name="SVC-TG").start()
@@ -127,9 +134,124 @@ class App:
         except KeyboardInterrupt:
             logger.info("Остановка...")
         finally:
+            self._stopping = True
             if self.account:
-                self.account.close()
+                try:
+                    self.account.close()
+                except Exception:
+                    pass
             self._pool.shutdown(wait=False)
+        if self._restart:
+            from utils.restart import restart_program
+
+            restart_program()
+
+    def request_restart(self) -> None:
+        self._restart = True
+        self._stopping = True
+        logger.info("Запрошен перезапуск.")
+        if self.telegram:
+            try:
+                self.telegram.bot.stop_polling()
+            except Exception:
+                pass
+        if self.runner:
+            self.runner.stop()
+
+    def autoraise_enabled(self) -> bool:
+        return cfg_get(self.cfg, "AutoRaise", "enabled", "1") not in {"0", "false", "no", "off"}
+
+    def bump_interval(self) -> int:
+        try:
+            value = float(cfg_get(self.cfg, "AutoRaise", "interval", "1800") or 1800)
+        except ValueError:
+            value = 1800
+        return max(300, int(value))
+
+    def raise_lots(self) -> int:
+        with self._bump_lock:
+            return self._raise_lots()
+
+    def _raise_lots(self) -> int:
+        if not self.account:
+            return self.bump_interval()
+        lots = self.account.get_lots()
+        if not lots:
+            self.last_bump = {"ok": 0, "fail": 0, "lots": 0, "at": time.time(), "wait": self.bump_interval(), "error": "нет лотов"}
+            logger.info("Автоподнятие: на аккаунте нет лотов.")
+            return self.bump_interval()
+        groups: dict[int, set[int]] = {}
+        referer = ""
+        for lot in lots:
+            if lot.game_id and lot.category_id:
+                groups.setdefault(lot.game_id, set()).add(lot.category_id)
+            if lot.category_url and not referer:
+                referer = lot.category_url
+        if not groups:
+            self.last_bump = {"ok": 0, "fail": 0, "lots": len(lots), "at": time.time(), "wait": self.bump_interval(), "error": "нет gameId/categoryId"}
+            logger.warning("Автоподнятие: лоты есть, но нет gameId/categoryId.")
+            return self.bump_interval()
+        ok = 0
+        fail = 0
+        wait_for = 0
+        last_error = ""
+        for game_id, categories in groups.items():
+            if self._stopping:
+                break
+            try:
+                result = self.account.bump(game_id, sorted(categories), referer=referer or None)
+                wait_for = max(wait_for, int(result.get("wait") or 0))
+                if result.get("success"):
+                    ok += 1
+                    bump_stat("bumps")
+                    logger.info("Поднял игру %s, категории %s", game_id, sorted(categories))
+                else:
+                    fail += 1
+                    last_error = str(result.get("message") or result.get("error") or f"HTTP {result.get('status')}")
+                    logger.warning("Бамп игры %s не принят: %s", game_id, last_error)
+            except StarvellAuthError as exc:
+                last_error = str(exc)
+                logger.error("Автоподнятие: сессия Starvell не принята.")
+                self.last_bump = {"ok": ok, "fail": fail + 1, "lots": len(lots), "at": time.time(), "wait": 60, "error": last_error}
+                return 60
+            except Exception as exc:
+                fail += 1
+                last_error = str(exc)
+                logger.exception("Ошибка бампа игры %s", game_id)
+        wait = wait_for if wait_for > 0 else self.bump_interval()
+        self.last_bump = {"ok": ok, "fail": fail, "lots": len(lots), "at": time.time(), "wait": wait, "error": last_error}
+        if self.telegram and (ok or fail):
+            from tg_bot.utils import NotificationTypes
+
+            if ok:
+                text = f"📈 Автоподнятие: поднято игр <b>{ok}</b>, лотов <b>{len(lots)}</b>."
+            else:
+                err = (last_error or "нет успеха").replace("<", "").replace(">", "")[:180]
+                text = f"⚠️ Автоподнятие не вышло ({err})."
+            try:
+                self.telegram.send_notification(text, notification_type=NotificationTypes.lots_raise)
+            except Exception:
+                logger.exception("Уведомление о бампе")
+        return max(300, wait)
+
+    def _sleep(self, seconds: float) -> None:
+        end = time.monotonic() + max(0.0, seconds)
+        while time.monotonic() < end and not self._stopping:
+            time.sleep(min(1.0, end - time.monotonic()))
+
+    def _bump_loop(self) -> None:
+        logger.info("Цикл автоподнятия запущен.")
+        self._sleep(8)
+        while not self._stopping:
+            try:
+                if not self.autoraise_enabled():
+                    self._sleep(5)
+                    continue
+                wait = self.raise_lots()
+                self._sleep(wait)
+            except Exception:
+                logger.exception("Цикл автоподнятия")
+                self._sleep(30)
 
     def send_message(self, chat_id: str, text: str) -> dict[str, Any]:
         if not self.account:

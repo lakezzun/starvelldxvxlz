@@ -69,6 +69,7 @@ class TGBot:
             "logs": "текущий лог",
             "upload_plugin": "загрузить плагин",
             "update": "обновить с GitHub",
+            "restart": "перезапустить бота",
             "about": "о боте",
         }
 
