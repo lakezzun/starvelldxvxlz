@@ -38,6 +38,11 @@ def main() -> None:
     ensure_dirs()
     clear_restart_flag()
     set_console_title(f"{APP_NAME} v{VERSION}")
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     colorama.init()
     configure_logging()
     logger = logging.getLogger("main")

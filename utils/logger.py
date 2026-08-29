@@ -32,8 +32,88 @@ CLI_TIME_FORMAT = "%d-%m-%Y %H:%M:%S"
 FILE_LOG_FORMAT = "[%(asctime)s][%(filename)s][%(lineno)d]> %(levelname).1s: %(message)s"
 FILE_TIME_FORMAT = "%d.%m.%y %H:%M:%S"
 CLEAR_RE = re.compile(r"(\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]))|(\n)|(\r)")
+ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 LOGGER_NAMES = ["main", "SVC", "TGBot"]
+_STD_OUTPUT = -11
+_STD_ERROR = -12
+
+
+def _enable_vt(stderr: bool = True) -> None:
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(_STD_ERROR if stderr else _STD_OUTPUT)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:
+        pass
+
+
+def _write_win_console(text: str, *, stderr: bool = True) -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(_STD_ERROR if stderr else _STD_OUTPUT)
+        if not handle or handle == ctypes.c_void_p(-1).value:
+            return False
+        if kernel32.GetFileType(handle) != 2:
+            return False
+        data = text.replace("\n", "\r\n")
+        written = ctypes.c_ulong(0)
+        buf = ctypes.create_unicode_buffer(data)
+        return bool(kernel32.WriteConsoleW(handle, buf, len(data), ctypes.byref(written), None))
+    except Exception:
+        return False
+
+
+def _write_fallback(stream, msg: str) -> None:
+    plain = ANSI_RE.sub("", msg)
+    try:
+        stream.write(plain)
+        stream.flush()
+        return
+    except Exception:
+        pass
+    raw = plain.encode("utf-8", errors="replace")
+    for buf in (
+        getattr(stream, "buffer", None),
+        getattr(getattr(stream, "wrapped", None), "buffer", None),
+        getattr(sys.__stderr__, "buffer", None),
+        getattr(sys.__stdout__, "buffer", None),
+    ):
+        if buf is None:
+            continue
+        try:
+            buf.write(raw)
+            buf.flush()
+            return
+        except Exception:
+            continue
+
+
+class CardinalStreamHandler(logging.StreamHandler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record) + self.terminator
+            if _write_win_console(msg, stderr=True) or _write_win_console(msg, stderr=False):
+                return
+            _write_fallback(self.stream, msg)
+        except Exception:
+            pass
+
+    def flush(self) -> None:
+        try:
+            super().flush()
+        except Exception:
+            pass
 
 
 def add_colors(text: str) -> str:
@@ -103,8 +183,10 @@ class _QueueHandler(logging.handlers.QueueHandler):
 def configure_logging() -> logging.handlers.QueueListener:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     secret = SecretFilter()
+    _enable_vt(True)
+    _enable_vt(False)
 
-    cli_handler = logging.StreamHandler()
+    cli_handler = CardinalStreamHandler()
     cli_handler.setLevel(logging.INFO)
     cli_handler.setFormatter(CLILoggerFormatter())
     cli_handler.addFilter(secret)
