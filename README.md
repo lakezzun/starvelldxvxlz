@@ -5,7 +5,7 @@ StarvellDxvxlz
 Разработчик: @dxvxlz (https://t.me/dxvxlz)
 GitHub: https://github.com/lakezzun/starvelldxvxlz
 Сайт: https://starvell.com
-Версия: 0.2.8
+Версия: 0.2.9
 
 Это не форк FunPay Cardinal и не бот @exfador. Свой HTTP-клиент к starvell.com (cookie session) и своя Telegram-панель на pyTelegramBotAPI. UX меню похож на Cardinal, API плагинов — как у Cardinal: хэндлер получает (app, event).
 
